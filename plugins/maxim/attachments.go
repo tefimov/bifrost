@@ -74,7 +74,7 @@ func chatBlockToAttachment(block schemas.ChatContentBlock) interface{} {
 	switch block.Type {
 	case schemas.ChatContentBlockTypeImage:
 		if block.ImageURLStruct != nil && block.ImageURLStruct.URL != "" {
-			return urlToAttachment(block.ImageURLStruct.URL, "image")
+			return urlToAttachment(block.ImageURLStruct.URL, "image", "")
 		}
 	case schemas.ChatContentBlockTypeFile:
 		if block.File != nil {
@@ -92,7 +92,7 @@ func responsesBlockToAttachment(block schemas.ResponsesMessageContentBlock) inte
 	switch block.Type {
 	case schemas.ResponsesInputMessageContentBlockTypeImage:
 		if block.ImageURL != nil && *block.ImageURL != "" {
-			return urlToAttachment(*block.ImageURL, "image")
+			return urlToAttachment(*block.ImageURL, "image", "")
 		}
 	case schemas.ResponsesInputMessageContentBlockTypeFile:
 		return responsesFileToAttachment(&block)
@@ -249,25 +249,57 @@ func audioDataToAttachment(data string, format *string) interface{} {
 	}
 }
 
-func urlToAttachment(urlStr string, kind string) interface{} {
+// urlToAttachment builds a UrlAttachment (e.g. chat vision image_url). For images, MIME is:
+// outputFormat when set → URL rsct query (e.g. Azure) → image/png.
+func urlToAttachment(urlStr string, kind string, outputFormat string) interface{} {
 	if strings.HasPrefix(urlStr, "data:") {
 		return dataURLToAttachment(urlStr, kind)
 	}
 	// HTTP/HTTPS URL
 	name := "attachment"
-	if u, err := url.Parse(urlStr); err == nil {
+	mime := ""
+	u, errParse := url.Parse(urlStr)
+	if errParse == nil {
 		if p := path.Base(u.Path); p != "" && p != "." {
 			name = p
+		}
+	}
+	if kind == "image" {
+		mime = imageOutputFormatToMime(outputFormat)
+		if mime == "" && errParse == nil {
+			if q := u.Query().Get("rsct"); q != "" {
+				mime = q
+			}
+		}
+		if mime == "" {
+			mime = "image/png"
 		}
 	}
 	return &logging.UrlAttachment{
 		BaseAttachmentProps: logging.BaseAttachmentProps{
 			ID:       uuid.New().String(),
 			Name:     name,
+			MimeType: mime,
 			Metadata: map[string]string{"url": urlStr},
 		},
 		Type: logging.AttachmentTypeURL,
 		URL:  urlStr,
+	}
+}
+
+// imageOutputFormatToMime maps provider output_format (e.g. png, jpeg, webp) to a MIME type.
+func imageOutputFormatToMime(format string) string {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "png":
+		return "image/png"
+	case "jpeg", "jpg":
+		return "image/jpeg"
+	case "webp":
+		return "image/webp"
+	case "gif":
+		return "image/gif"
+	default:
+		return ""
 	}
 }
 

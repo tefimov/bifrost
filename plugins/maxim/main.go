@@ -390,6 +390,21 @@ func (plugin *Plugin) PreLLMHook(ctx *schemas.BifrostContext, req *schemas.Bifro
 				json.Unmarshal(jsonData, &modelParams)
 			}
 		}
+	case schemas.ImageGenerationRequest, schemas.ImageGenerationStreamRequest:
+		if req.ImageGenerationRequest == nil {
+			break
+		}
+		messages = append(messages, maximSchemas.CompletionRequest{
+			Role:    string(schemas.ChatMessageRoleUser),
+			Content: req.ImageGenerationRequest.Input.Prompt,
+		})
+		latestMessage = req.ImageGenerationRequest.Input.Prompt
+		if req.ImageGenerationRequest.Params != nil {
+			jsonData, err := json.Marshal(req.ImageGenerationRequest.Params)
+			if err == nil {
+				json.Unmarshal(jsonData, &modelParams)
+			}
+		}
 	}
 
 	if traceID == "" {
@@ -495,6 +510,9 @@ func (plugin *Plugin) PostLLMHook(ctx *schemas.BifrostContext, result *schemas.B
 	if effectiveLogRepoID == "" {
 		return result, bifrostErr, nil
 	}
+	if ctx == nil {
+		return result, bifrostErr, nil
+	}
 
 	requestID, ok := ctx.Value(schemas.BifrostContextKeyRequestID).(string)
 	if !ok || requestID == "" {
@@ -583,6 +601,12 @@ func (plugin *Plugin) PostLLMHook(ctx *schemas.BifrostContext, result *schemas.B
 					} else {
 						logger.AddResultToGeneration(generationID, result.ResponsesResponse)
 					}
+				case schemas.ImageGenerationRequest, schemas.ImageGenerationStreamRequest:
+					if streamResponse != nil {
+						logger.AddResultToGeneration(generationID, streamResponse.ToBifrostResponse().ImageGenerationResponse)
+					} else if result != nil {
+						logger.AddResultToGeneration(generationID, result.ImageGenerationResponse)
+					}
 				}
 				if streamResponse != nil && isFinalChunk {
 					// Cleanup via central tracer
@@ -592,8 +616,6 @@ func (plugin *Plugin) PostLLMHook(ctx *schemas.BifrostContext, result *schemas.B
 					}
 				}
 			}
-
-			logger.EndGeneration(generationID)
 		}
 		if hasTraceID {
 			logger.EndTrace(traceID)
@@ -610,8 +632,12 @@ func (plugin *Plugin) PostLLMHook(ctx *schemas.BifrostContext, result *schemas.B
 				}
 			}
 		}
-		logger.AddTagToGeneration(generationID, "model", string(model))
-		logger.AddTagToTrace(traceID, "model", string(model))
+		if hasGenerationID && generationID != "" {
+			logger.AddTagToGeneration(generationID, "model", string(model))
+		}
+		if hasTraceID && traceID != "" {
+			logger.AddTagToTrace(traceID, "model", string(model))
+		}
 		// Flush only the effective logger that was used for this request
 		logger.Flush()
 	}()
